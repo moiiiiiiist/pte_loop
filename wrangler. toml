@@ -1,5 +1,0 @@
-name = "pte-loop"               # 必须和 CI 期望的名称一致
-compatibility_date = "2025-05-30"  # 必填，建议用今天的日期
-
-[assets]
-directory = "./dist"            # 指向你的静态文件目录
