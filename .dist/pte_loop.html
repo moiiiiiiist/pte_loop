@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paragraph Loop Reader</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
+    #app { display: flex; flex-direction: column; height: 100%; max-width: 1200px; margin: auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    header { background: linear-gradient(90deg, #2e7d32, #1b5e20); padding: 16px; text-align: center; }
+    header h1 { color: #fff; font-size: 2rem; }
+    #loader { display: flex; align-items: center; padding: 12px 24px; background: #fafafa; border-bottom: 1px solid #ececec; gap: 12px; }
+    #loader input[type=file] { flex: 1; }
+    #loader select { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; }
+    #loader #status { font-size: 1rem; color: #333; margin-left: auto; }
+    #text-container { flex: 1; padding: 24px; font-size: 49px; line-height: 1.4; overflow-y: auto; }
+    #text-container span.active { background: #ffea00; border-radius: 4px; }
+    footer { position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #ececec; padding: 12px 24px; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 12px; }
+    footer button { background: #4caf50; color: #fff; border: none; border-radius: 4px; padding: 10px 16px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+    footer button:disabled { background: #a5d6a7; cursor: not-allowed; }
+    footer button:not(:disabled):hover { background: #388e3c; }
+    footer label { display: flex; align-items: center; font-size: 1rem; color: #333; gap: 4px; }
+    footer input[type=number] { width: 64px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header><h1>Paragraph Loop Reader</h1></header>
+    <div id="loader">
+      <input type="file" id="fileInput" accept=".txt" multiple />
+      <select id="fileSelect" disabled></select>
+      <div id="status">No files loaded</div>
+    </div>
+    <div id="text-container"></div>
+    <footer>
+      <button id="prevBtn" disabled>« Previous</button>
+      <button id="nextBtn" disabled>Next »</button>
+      <button id="playBtn" disabled>▶️ Play</button>
+      <button id="stopBtn" disabled>⏹ Stop</button>
+      <label>Repeats:<input type="number" id="repeatInput" value="5" min="1"></label>
+      <label>Speed:<input type="number" id="speedInput" value="1" min="0.5" step="0.1"><span id="speedValue">1.0</span>x</label>
+      <label>Pause(ms):<input type="number" id="pauseInput" value="800" min="0"><span id="pauseValue">800</span></label>
+      <label>Font(px):<input type="number" id="fontInput" value="49" min="10"><span id="fontSizeValue">49</span></label>
+    </footer>
+  </div>
+  <script>
+    const fileData = [];
+    let fileIndex = 0, paraIndex = 0, playing = false, repeatTimes = 5, loopCount = 0;
+    let sentenceData = [];
+    const fileInput = document.getElementById('fileInput');
+    const fileSelect = document.getElementById('fileSelect');
+    const statusEl = document.getElementById('status');
+    const container = document.getElementById('text-container');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playBtn = document.getElementById('playBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const repeatInput = document.getElementById('repeatInput');
+    const speedInput = document.getElementById('speedInput'), speedValue = document.getElementById('speedValue');
+    const pauseInput = document.getElementById('pauseInput'), pauseValue = document.getElementById('pauseValue');
+    const fontInput = document.getElementById('fontInput'), fontSizeValue = document.getElementById('fontSizeValue');
+
+    function splitParagraphs(text) {
+      return text.split(/\r?\n{2,}|(?=^\d+\.)/gm).map(p => p.trim()).filter(Boolean);
+    }
+
+    function updateStatus() {
+      if (!fileData.length) {
+        statusEl.textContent = 'No files loaded';
+        return;
+      }
+      const totalParas = fileData[fileIndex].paragraphs.length;
+      const displayLoop = Math.min(loopCount + 1, repeatTimes);
+      statusEl.textContent = `File ${fileIndex + 1}/${fileData.length} • Paragraph ${paraIndex + 1}/${totalParas} • Loop ${displayLoop}/${repeatTimes}`;
+    }
+
+    function updateDisplay() {
+      updateStatus();
+      container.style.fontSize = `${fontInput.value}px`;
+      const text = fileData[fileIndex].paragraphs[paraIndex];
+      container.innerHTML = text.split(/(\s+)/).map(w => `<span>${w}</span>`).join('');
+      prevBtn.disabled = paraIndex === 0;
+      nextBtn.disabled = paraIndex === fileData[fileIndex].paragraphs.length - 1;
+    }
+
+    function prepareSentences() {
+      sentenceData = [];
+      const text = fileData[fileIndex].paragraphs[paraIndex];
+      const regex = /[^.!?]+[.!?]+|[^.!?]+$/g;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        sentenceData.push({ text: match[0].trim(), start: match.index, end: match.index + match[0].length });
+      }
+    }
+
+    function highlightRange(start, end) {
+      let cum = 0;
+      container.querySelectorAll('span').forEach(span => {
+        const len = span.textContent.length;
+        const active = cum < end && cum + len > start;
+        span.classList.toggle('active', active);
+        cum += len;
+      });
+    }
+
+    function speakSentence(idx) {
+      if (!playing) return;
+      if (idx >= sentenceData.length) {
+        loopCount++;
+        updateStatus();
+        if (loopCount < repeatTimes) {
+          speakSentence(0);
+        } else if (paraIndex < fileData[fileIndex].paragraphs.length - 1) {
+          paraIndex++;
+          loopCount = 0;
+          updateDisplay();
+          prepareSentences();
+          speakSentence(0);
+        } else {
+          stopPlayback();
+        }
+        return;
+      }
+      const { text, start, end } = sentenceData[idx];
+      highlightRange(start, end);
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = parseFloat(speedInput.value);
+      utt.onend = () => setTimeout(() => speakSentence(idx + 1), parseInt(pauseInput.value, 10));
+      speechSynthesis.speak(utt);
+    }
+
+    // Define missing prevParagraph and startPlayback
+    function prevParagraph() {
+      if (paraIndex > 0) {
+        stopPlayback();
+        paraIndex--;
+        loopCount = 0;
+        updateDisplay();
+      }
+    }
+
+    function nextParagraph() {
+      if (paraIndex < fileData[fileIndex].paragraphs.length - 1) {
+        stopPlayback();
+        paraIndex++;
+        loopCount = 0;
+        updateDisplay();
+      }
+    }
+
+    function startPlayback() {
+      playing = true;
+      repeatTimes = Math.max(1, parseInt(repeatInput.value, 10));
+      loopCount = 0;
+      prepareSentences();
+      speakSentence(0);
+      playBtn.disabled = true;
+      stopBtn.disabled = false;
+    }
+
+    function stopPlayback() {
+      playing = false;
+      speechSynthesis.cancel();
+      container.querySelectorAll('span').forEach(s => s.classList.remove('active'));
+      playBtn.disabled = false;
+      stopBtn.disabled = true;
+      updateDisplay();
+    }
+
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files);
+      fileData.length = 0;
+      fileSelect.innerHTML = '';
+      files.forEach((f, i) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          const paragraphs = splitParagraphs(e.target.result);
+          fileData.push({ name: f.name, paragraphs });
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.text = f.name;
+          fileSelect.add(opt);
+
+          if (i === 0) {
+            fileSelect.disabled = false;
+            prevBtn.disabled = false;
+            nextBtn.disabled = false;
+            playBtn.disabled = false;
+            paraIndex = 0;
+            fileIndex = 0;
+            updateDisplay();
+          }
+          updateStatus();
+        };
+        reader.readAsText(f);
+      });
+    });
+
+    fileSelect.addEventListener('change', () => {
+      stopPlayback();
+      fileIndex = fileSelect.selectedIndex;
+      paraIndex = 0;
+      loopCount = 0;
+      updateDisplay();
+    });
+
+    prevBtn.addEventListener('click', prevParagraph);
+    nextBtn.addEventListener('click', nextParagraph);
+    playBtn.addEventListener('click', startPlayback);
+    stopBtn.addEventListener('click', stopPlayback);
+
+    [prevBtn, nextBtn, playBtn, stopBtn].forEach(b => b.disabled = true);
+    fileSelect.disabled = true;
+
+    repeatInput.addEventListener('input', () => { repeatTimes = parseInt(repeatInput.value, 10); updateStatus(); });
+    speedInput.addEventListener('input', () => { speedValue.textContent = speedInput.value; updateStatus(); });
+    pauseInput.addEventListener('input', () => { pauseValue.textContent = pauseInput.value; updateStatus(); });
+    fontInput.addEventListener('input', () => { fontSizeValue.textContent = fontInput.value; updateDisplay(); });
+  </script>
+</body>
+</html>
